@@ -1,0 +1,62 @@
+name: Build image-enhanced RSS
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17,47 * * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate enhanced RSS
+        env:
+          SOURCE_FEED: https://figure.ooo/feed.xml
+          PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/feed.xml
+          OUTPUT: public/feed.xml
+        run: python scripts/build_feed.py
+
+      - name: Add landing page
+        run: |
+          mkdir -p public
+          cat > public/index.html <<'EOF'
+          <!doctype html>
+          <html lang="ja">
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>figure.ooo 画像付きRSS</title>
+          <h1>figure.ooo 画像付きRSS</h1>
+          <p><a href="./feed.xml">RSSフィードを開く</a></p>
+          </html>
+          EOF
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy Pages
+        uses: actions/deploy-pages@v4
