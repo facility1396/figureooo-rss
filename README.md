@@ -1,28 +1,31 @@
-# figure.ooo 画像付きRSS
+# フィギュア関連RSS
 
-figure.ooo の既存RSSを読み込み、記事ページから画像と本文HTMLを抽出して、Inoreader向けのRSSを生成します。
+このリポジトリでは、figure.ooo とダイキ工業のRSSを生成し、GitHub Pagesで公開します。
 
-## セットアップ
+## 公開フィード
 
-1. Settings → Pages を開き、Build and deployment の Source を **GitHub Actions** に設定します。
-2. Actions タブで **Build image-enhanced RSS** を選び、Run workflow を実行します。
-3. 成功後、次のURLをInoreaderに登録します。
+- figure.ooo：タイトル・トップ画像・記事リンクのみ  
+  https://facility1396.github.io/figureooo-rss/feed.xml
+- ダイキ工業：製品情報RSS  
+  https://facility1396.github.io/figureooo-rss/daiki/feed.xml
 
-   `https://facility1396.github.io/figureooo-rss/feed.xml`
+一覧ページ：
+https://facility1396.github.io/figureooo-rss/
 
 ## 動作
 
-- 30分ごとに figure.ooo/feed.xml を取得
-- 記事ページから本文領域と画像を抽出
-- `media:thumbnail` と `enclosure` にメイン画像を設定
-- `media:content` に抽出した画像を列挙
-- `content:encoded` に本文HTML（本文画像を含む）を格納
-- GitHub Pagesで `feed.xml` を公開
+- GitHub Actionsで30分ごとに更新
+- figure.oooは公式RSSを読み込み、各記事ページからトップ画像だけを取得
+- figure.oooのRSSには記事タイトル、記事リンク、トップ画像のみを掲載
+- figure.oooの記事本文や本文中の画像一覧はRSSに含めず、記事を読む場合は元サイトを開く
+- ダイキ工業は製品情報のみを取得し、お知らせ等は除外
+
+## 手動実行
+
+GitHubのActionsタブから「Build RSS feeds」を選択し、「Run workflow」を実行できます。
 
 ## 注意
 
-- 初回実行は Actions タブから手動実行してください。
-- サイト側のHTML構造変更やアクセス制限（403等）で画像抽出が失敗する場合があります。Actions のログで確認してください。
-- 画像は figure.ooo の画像URLを参照します。画像ファイルをこのリポジトリに複製するものではありません。
-- Inoreaderの一覧サムネイル表示は、Inoreader側の表示設定や画像取得仕様にも依存します。
-- RSSには元記事の画像・本文が含まれるため、成人向けカテゴリの表示にも注意してください。
+- figure.oooの画像は元サイトの画像URLを参照します。画像ファイルをこのリポジトリに複製するものではありません。
+- 元サイトのHTML構造変更やアクセス制限により、トップ画像の取得に失敗する場合があります。Actionsのログで確認してください。
+- サイト側の利用条件・権利関係は、各サイトの規約等を別途確認してください。
