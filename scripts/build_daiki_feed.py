@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a unified image-rich RSS feed from Daiki Kogyo's public site archives."""
+"""Build an image-rich RSS feed for Daiki Kogyo product announcements only."""
 
 import os
 import re
@@ -21,10 +21,9 @@ OUTPUT = os.getenv("OUTPUT", "public/daiki/feed.xml")
 MAX_PAGES = int(os.getenv("MAX_PAGES", "3"))
 UA = "Mozilla/5.0 (compatible; DaikiKogyoRSS/1.0)"
 
+# Only the official product archive is included. News and shipping notices are excluded.
 ARCHIVES = [
     ("/products/", "製品情報"),
-    ("/info/", "お知らせ"),
-    ("/shipping/", "出荷情報"),
 ]
 
 NS = {
@@ -237,9 +236,9 @@ def main():
 
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
-    ET.SubElement(channel, "title").text = "ダイキ工業 公式サイト更新情報"
+    ET.SubElement(channel, "title").text = "ダイキ工業 製品情報"
     ET.SubElement(channel, "link").text = BASE
-    ET.SubElement(channel, "description").text = "ダイキ工業公式サイトの製品情報・お知らせ・出荷情報をまとめたRSSフィード。"
+    ET.SubElement(channel, "description").text = "ダイキ工業公式サイトの製品情報のみを掲載するRSSフィード。"
     ET.SubElement(channel, "language").text = "ja"
     atom = ET.SubElement(channel, f"{{{NS['atom']}}}link")
     atom.set("href", PUBLIC_URL)
