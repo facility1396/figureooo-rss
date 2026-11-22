@@ -50,9 +50,16 @@ jobs:
           MAX_PAGES: "5"
         run: python scripts/build_nocturne_feed.py
 
+      - name: Generate Native Store all-brand product RSS
+        env:
+          PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/native-store/feed.xml
+          OUTPUT: public/native-store/feed.xml
+          MAX_PAGES: "25"
+        run: python scripts/build_native_store_feed.py
+
       - name: Add landing page
         run: |
-          mkdir -p public/daiki public/nocturne
+          mkdir -p public/daiki public/nocturne public/native-store
           cat > public/index.html <<'EOF'
           <!doctype html>
           <html lang="ja">
@@ -64,7 +71,17 @@ jobs:
             <li><a href="./feed.xml">figure.ooo 画像付きRSS</a></li>
             <li><a href="./daiki/feed.xml">ダイキ工業 製品情報RSS</a></li>
             <li><a href="./nocturne/feed.xml">ノクターン 新製品情報RSS</a></li>
+            <li><a href="./native-store/feed.xml">native STORE 全ブランド商品RSS</a></li>
           </ul>
+          </html>
+          EOF
+          cat > public/native-store/index.html <<'EOF'
+          <!doctype html>
+          <html lang="ja">
+          <meta charset="utf-8">
+          <title>native STORE 全ブランド商品RSS</title>
+          <h1>native STORE 全ブランド商品RSS</h1>
+          <p><a href="./feed.xml">RSSフィードを開く</a></p>
           </html>
           EOF
           cat > public/nocturne/index.html <<'EOF'
