@@ -1,4 +1,4 @@
-name: Build image-enhanced RSS
+name: Build RSS feeds
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Generate figure.ooo enhanced RSS
+      - name: Generate figure.ooo title-and-thumbnail RSS
         env:
           SOURCE_FEED: https://figure.ooo/feed.xml
           PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/feed.xml
@@ -43,62 +43,28 @@ jobs:
           MAX_PAGES: "3"
         run: python scripts/build_daiki_feed.py
 
-      - name: Generate Nocturne product RSS
-        env:
-          PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/nocturne/feed.xml
-          OUTPUT: public/nocturne/feed.xml
-          MAX_PAGES: "5"
-        run: python scripts/build_nocturne_feed.py
-
-      - name: Generate Native Store all-brand product RSS
-        env:
-          PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/native-store/feed.xml
-          OUTPUT: public/native-store/feed.xml
-          MAX_PAGES: "25"
-        run: python scripts/build_native_store_feed.py
-
       - name: Add landing page
         run: |
-          mkdir -p public/daiki public/nocturne public/native-store
+          mkdir -p public/daiki
           cat > public/index.html <<'EOF'
           <!doctype html>
           <html lang="ja">
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>画像付きRSS一覧</title>
-          <h1>画像付きRSS一覧</h1>
+          <title>RSS一覧</title>
+          <h1>RSS一覧</h1>
           <ul>
-            <li><a href="./feed.xml">figure.ooo 画像付きRSS</a></li>
+            <li><a href="./feed.xml">figure.ooo タイトル・トップ画像RSS</a></li>
             <li><a href="./daiki/feed.xml">ダイキ工業 製品情報RSS</a></li>
-            <li><a href="./nocturne/feed.xml">ノクターン 新製品情報RSS</a></li>
-            <li><a href="./native-store/feed.xml">native STORE 全ブランド商品RSS</a></li>
           </ul>
-          </html>
-          EOF
-          cat > public/native-store/index.html <<'EOF'
-          <!doctype html>
-          <html lang="ja">
-          <meta charset="utf-8">
-          <title>native STORE 全ブランド商品RSS</title>
-          <h1>native STORE 全ブランド商品RSS</h1>
-          <p><a href="./feed.xml">RSSフィードを開く</a></p>
-          </html>
-          EOF
-          cat > public/nocturne/index.html <<'EOF'
-          <!doctype html>
-          <html lang="ja">
-          <meta charset="utf-8">
-          <title>ノクターン 新製品情報RSS</title>
-          <h1>ノクターン 新製品情報RSS</h1>
-          <p><a href="./feed.xml">RSSフィードを開く</a></p>
           </html>
           EOF
           cat > public/daiki/index.html <<'EOF'
           <!doctype html>
           <html lang="ja">
           <meta charset="utf-8">
-          <title>ダイキ工業 RSS</title>
-          <h1>ダイキ工業 公式サイト更新RSS</h1>
+          <title>ダイキ工業 製品情報RSS</title>
+          <h1>ダイキ工業 製品情報RSS</h1>
           <p><a href="./feed.xml">RSSフィードを開く</a></p>
           </html>
           EOF
