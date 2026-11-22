@@ -29,23 +29,42 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Generate enhanced RSS
+      - name: Generate figure.ooo enhanced RSS
         env:
           SOURCE_FEED: https://figure.ooo/feed.xml
           PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/feed.xml
           OUTPUT: public/feed.xml
         run: python scripts/build_feed.py
 
+      - name: Generate Daiki Kogyo RSS
+        env:
+          PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/daiki/feed.xml
+          OUTPUT: public/daiki/feed.xml
+          MAX_PAGES: "3"
+        run: python scripts/build_daiki_feed.py
+
       - name: Add landing page
         run: |
-          mkdir -p public
+          mkdir -p public/daiki
           cat > public/index.html <<'EOF'
           <!doctype html>
           <html lang="ja">
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>figure.ooo 画像付きRSS</title>
-          <h1>figure.ooo 画像付きRSS</h1>
+          <title>画像付きRSS一覧</title>
+          <h1>画像付きRSS一覧</h1>
+          <ul>
+            <li><a href="./feed.xml">figure.ooo 画像付きRSS</a></li>
+            <li><a href="./daiki/feed.xml">ダイキ工業 公式サイト更新RSS</a></li>
+          </ul>
+          </html>
+          EOF
+          cat > public/daiki/index.html <<'EOF'
+          <!doctype html>
+          <html lang="ja">
+          <meta charset="utf-8">
+          <title>ダイキ工業 RSS</title>
+          <h1>ダイキ工業 公式サイト更新RSS</h1>
           <p><a href="./feed.xml">RSSフィードを開く</a></p>
           </html>
           EOF
