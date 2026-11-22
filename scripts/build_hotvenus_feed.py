@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Add one primary product image to HOTVENUS's official Works RSS.
+"""Build an image-enriched RSS from HOTVENUS's official Works feed.
 
-The official RSS remains the source of product discovery. This script only
-visits each linked Works detail page to find its Open Graph/primary image.
-It publishes title, link, GUID/date metadata, and one image reference.
+The official RSS is the sole source of item discovery. For each linked detail
+page, prefer a product-specific image embedded in the page body. Generic/shared
+Open Graph images are deliberately rejected; if no trustworthy image is found,
+the item is published without an image rather than with a dummy.
 """
 import mimetypes
 import os
 import re
 import time
+from collections import Counter
 from urllib.parse import urljoin, urlparse, urldefrag
 from xml.etree import ElementTree as ET
 
@@ -29,9 +31,21 @@ MEDIA_NS = "http://search.yahoo.com/mrss/"
 ET.register_namespace("atom", ATOM_NS)
 ET.register_namespace("media", MEDIA_NS)
 
+GENERIC_RE = re.compile(
+    r"(logo|icon|banner|sns|qr|placeholder|no[-_ ]?image|noimage|dummy|"
+    r"default|loading|spacer|blank|background|avatar|share|facebook|twitter|"
+    r"instagram|line[-_ ]?icon|header|footer|age[-_ ]?gate)",
+    re.I,
+)
+CONTENT_RE = re.compile(
+    r"(works|product|detail|gallery|slider|swiper|slick|visual|main|kv|"
+    r"single|entry|item|photo|image)",
+    re.I,
+)
+
 session = requests.Session()
 session.headers.update({
-    "User-Agent": "Mozilla/5.0 (compatible; HOTVENUS-RSS/1.0; +https://github.com/facility1396/figureooo-rss)",
+    "User-Agent": "Mozilla/5.0 (compatible; HOTVENUS-RSS/1.1; +https://github.com/facility1396/figureooo-rss)",
     "Accept": "text/html,application/xhtml+xml,application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ja,en-US;q=0.8,en;q=0.7",
 })
@@ -59,14 +73,17 @@ def absolute_image_url(value, page_url):
     parsed = urlparse(value)
     if parsed.scheme not in ("http", "https"):
         return ""
+    if parsed.path.lower().endswith(".svg"):
+        return ""
     return value
 
 
-def image_from_img(img, page_url):
-    if img is None:
-        return ""
+def normalized(value):
+    return re.sub(r"[^\wぁ-んァ-ヶ一-龯]", "", (value or "").casefold())
 
-    # Prefer the largest candidate when a responsive srcset is present.
+
+def image_from_img(img, page_url):
+    """Return the largest usable URL from an img element."""
     srcset = img.get("srcset") or img.get("data-srcset") or ""
     if srcset:
         candidates = []
@@ -94,10 +111,80 @@ def image_from_img(img, page_url):
     return ""
 
 
-def extract_primary_image(page_html, page_url):
-    soup = BeautifulSoup(page_html, "html.parser")
+def image_identity(image_url):
+    parsed = urlparse(image_url)
+    # Ignore resizing/cache query parameters when detecting shared assets.
+    return f"{parsed.netloc.lower()}{parsed.path}".casefold()
 
-    # Open Graph is the preferred source for the page's designated lead image.
+
+def extract_image_candidates(page_html, page_url, item_title):
+    soup = BeautifulSoup(page_html, "html.parser")
+    title_key = normalized(item_title)
+    candidates = {}
+    regions = []
+
+    # Collect image-bearing content regions first. These outrank site-wide
+    # social metadata, which may point to a generic placeholder.
+    for selector in (
+        ".p-works-detail", ".works-detail", ".works-single",
+        ".single-works", ".entry-content", "article", "main",
+    ):
+        for region in soup.select(selector):
+            if region.find("img"):
+                regions.append((region, 35))
+
+    # If a theme uses different class names, still inspect the document body,
+    # but score those images lower and reject navigation/footer assets.
+    if not regions and soup.body:
+        regions.append((soup.body, 10))
+
+    for region, base_score in regions:
+        for img in region.find_all("img"):
+            image_url = image_from_img(img, page_url)
+            if not image_url:
+                continue
+
+            classes = " ".join(img.get("class", []))
+            parent_classes = " ".join(
+                " ".join(parent.get("class", []))
+                for parent in img.parents
+                if getattr(parent, "get", None) and parent.name not in ("body", "html")
+            )
+            alt = img.get("alt", "")
+            title_attr = img.get("title", "")
+            context = " ".join((image_url, classes, parent_classes, alt, title_attr))
+
+            if GENERIC_RE.search(context):
+                continue
+
+            width = img.get("width", "")
+            height = img.get("height", "")
+            try:
+                area = int(re.sub(r"\D", "", str(width))) * int(re.sub(r"\D", "", str(height)))
+            except (TypeError, ValueError):
+                area = 0
+            if area and area < 40000:
+                continue
+
+            score = base_score
+            if CONTENT_RE.search(classes + " " + parent_classes):
+                score += 15
+            if title_key and len(title_key) >= 3:
+                if title_key in normalized(alt + " " + title_attr + " " + image_url):
+                    score += 70
+            if area >= 500000:
+                score += 15
+            elif area and area < 120000:
+                score -= 15
+            if re.search(r"[-_]\d{2,4}x\d{2,4}(?=\.)", urlparse(image_url).path):
+                score -= 10
+
+            old = candidates.get(image_url)
+            if old is None or score > old:
+                candidates[image_url] = score
+
+    # OGP/Twitter metadata is only a low-priority fallback. It is accepted
+    # later only when it is unique to this product and corroborated by title.
     for attrs in (
         {"property": "og:image"},
         {"property": "og:image:secure_url"},
@@ -105,35 +192,23 @@ def extract_primary_image(page_html, page_url):
         {"property": "twitter:image"},
     ):
         meta = soup.find("meta", attrs=attrs)
-        if meta and meta.get("content"):
-            image_url = absolute_image_url(meta["content"], page_url)
-            if image_url:
-                return image_url
-
-    # Fallback: only inspect the first image in a likely product-detail region.
-    selectors = (
-        ".p-works-detail",
-        ".works-detail",
-        ".works-single",
-        ".entry-content",
-        "article",
-        "main",
-    )
-    for selector in selectors:
-        region = soup.select_one(selector)
-        if not region:
+        if not meta or not meta.get("content"):
             continue
-        for img in region.find_all("img"):
-            classes = " ".join(img.get("class", []))
-            alt = img.get("alt", "")
-            src = " ".join(str(img.get(k, "")) for k in ("src", "data-src", "data-lazy-src"))
-            if re.search(r"(logo|icon|banner|sns|qr)", f"{classes} {alt} {src}", re.I):
-                continue
-            image_url = image_from_img(img, page_url)
-            if image_url:
-                return image_url
+        image_url = absolute_image_url(meta["content"], page_url)
+        if not image_url or GENERIC_RE.search(image_url):
+            continue
+        corroborated = bool(
+            title_key and len(title_key) >= 3
+            and title_key in normalized(image_url)
+        )
+        score = 30 if corroborated else -20
+        candidates[image_url] = max(score, candidates.get(image_url, -999))
 
-    return ""
+    return sorted(
+        ({"url": url, "score": score} for url, score in candidates.items()),
+        key=lambda candidate: candidate["score"],
+        reverse=True,
+    )
 
 
 def main():
@@ -151,28 +226,29 @@ def main():
     if not source_items:
         raise RuntimeError("HOTVENUS official RSS contains no items")
 
-    # Keep the official feed's title and original source URL, but use our own
-    # public feed URL as the Atom self link.
-    title = channel.findtext("title", "HOTVENUS 製品情報").strip()
     rss = ET.Element("rss", {"version": "2.0"})
     out_channel = ET.SubElement(rss, "channel")
     ET.SubElement(out_channel, "title").text = "HOTVENUS 製品情報"
     ET.SubElement(out_channel, "link").text = "https://hotvenus.jp/works/"
     ET.SubElement(out_channel, "description").text = (
-        "HOTVENUS公式WORKSの製品情報。商品タイトル・トップ画像・商品ページへのリンクのみ。"
+        "HOTVENUS公式WORKSの製品情報。商品タイトル・商品固有のトップ画像・商品ページへのリンクのみ。"
     )
     language = channel.findtext("language")
     if language:
         ET.SubElement(out_channel, "language").text = language
-    ET.SubElement(out_channel, "lastBuildDate").text = channel.findtext("lastBuildDate", "")
+    last_build = channel.findtext("lastBuildDate", "").strip()
+    if last_build:
+        ET.SubElement(out_channel, "lastBuildDate").text = last_build
 
     atom_link = ET.SubElement(out_channel, f"{{{ATOM_NS}}}link")
     atom_link.set("href", PUBLIC_FEED_URL)
     atom_link.set("rel", "self")
     atom_link.set("type", "application/rss+xml")
 
-    success = failed = no_image = 0
+    # First pass: fetch all detail pages and gather candidate images.
+    records = []
     seen = set()
+    page_ok = page_errors = 0
     for index, source_item in enumerate(source_items[:MAX_ITEMS], 1):
         link = source_item.findtext("link", "").strip()
         item_title = source_item.findtext("title", "").strip()
@@ -185,53 +261,90 @@ def main():
             continue
 
         seen.add(link)
-        image_url = ""
+        candidates = []
         try:
             response = get(link)
-            image_url = extract_primary_image(response.text, response.url)
-            success += 1
-            if image_url:
-                print(f"[{index}/{len(source_items)}] OK image=yes {link}")
-            else:
-                no_image += 1
-                print(f"[{index}/{len(source_items)}] WARNING image=not-found {link}")
+            candidates = extract_image_candidates(response.text, response.url, item_title)
+            page_ok += 1
+            print(
+                f"[{index}/{len(source_items)}] FETCHED candidates={len(candidates)} {link}"
+            )
         except requests.RequestException as exc:
-            failed += 1
+            page_errors += 1
             print(f"[{index}/{len(source_items)}] ERROR {link}: {exc}")
 
-        out_item = ET.SubElement(out_channel, "item")
-        ET.SubElement(out_item, "title").text = item_title
-        ET.SubElement(out_item, "link").text = link
+        records.append({
+            "source_item": source_item,
+            "title": item_title,
+            "link": link,
+            "candidates": candidates,
+        })
+        time.sleep(REQUEST_DELAY)
 
+    if not records:
+        raise RuntimeError("No valid HOTVENUS Works items were found in the official feed")
+
+    # Count candidate URLs across different products. Shared assets (including
+    # generic OG images that happen to have unusual filenames) are rejected.
+    frequency = Counter()
+    for record in records:
+        identities = {
+            image_identity(candidate["url"])
+            for candidate in record["candidates"]
+            if candidate["score"] >= 20
+        }
+        frequency.update(identities)
+
+    no_image = 0
+    for record in records:
+        selected = ""
+        for candidate in record["candidates"]:
+            if candidate["score"] < 20:
+                continue
+            if frequency[image_identity(candidate["url"])] != 1:
+                continue
+            selected = candidate["url"]
+            break
+
+        if selected:
+            print(f"SELECTED image=yes title={record['title']} url={selected}")
+        else:
+            no_image += 1
+            print(f"WARNING image=not-found-or-untrusted title={record['title']}")
+
+        out_item = ET.SubElement(out_channel, "item")
+        ET.SubElement(out_item, "title").text = record["title"]
+        ET.SubElement(out_item, "link").text = record["link"]
+
+        source_item = record["source_item"]
         guid = source_item.find("guid")
-        guid_value = (guid.text or "").strip() if guid is not None else link
-        guid_attrs = {"isPermaLink": guid.get("isPermaLink", "true")} if guid is not None else {"isPermaLink": "true"}
+        guid_value = (guid.text or "").strip() if guid is not None else record["link"]
+        guid_attrs = (
+            {"isPermaLink": guid.get("isPermaLink", "true")}
+            if guid is not None else {"isPermaLink": "true"}
+        )
         ET.SubElement(out_item, "guid", guid_attrs).text = guid_value
 
         pub_date = source_item.findtext("pubDate", "").strip()
         if pub_date:
             ET.SubElement(out_item, "pubDate").text = pub_date
 
-        if image_url:
-            ET.SubElement(out_item, f"{{{MEDIA_NS}}}thumbnail", {"url": image_url})
-            image_type = mimetypes.guess_type(urlparse(image_url).path)[0] or "image/jpeg"
+        if selected:
+            ET.SubElement(out_item, f"{{{MEDIA_NS}}}thumbnail", {"url": selected})
+            image_type = mimetypes.guess_type(urlparse(selected).path)[0] or "image/jpeg"
             ET.SubElement(out_item, "enclosure", {
-                "url": image_url,
+                "url": selected,
                 "type": image_type,
                 "length": "0",
             })
-
-        time.sleep(REQUEST_DELAY)
-
-    if not seen:
-        raise RuntimeError("No valid HOTVENUS Works items were found in the official feed")
 
     os.makedirs(os.path.dirname(OUTPUT) or ".", exist_ok=True)
     ET.indent(rss, space="  ")
     ET.ElementTree(rss).write(OUTPUT, encoding="utf-8", xml_declaration=True)
     print(
-        f"HOTVENUS complete: items={len(seen)}, pages_ok={success}, "
-        f"page_errors={failed}, images_missing={no_image}, output={OUTPUT}"
+        f"HOTVENUS complete: items={len(records)}, pages_ok={page_ok}, "
+        f"page_errors={page_errors}, images_missing_or_rejected={no_image}, "
+        f"output={OUTPUT}"
     )
 
 
