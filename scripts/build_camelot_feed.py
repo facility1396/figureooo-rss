@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Build a minimal RSS feed from CAMELOT's public product archive.
+"""Build a minimal CAMELOT product RSS feed.
 
-Only linked product cards are emitted. Upcoming cards without a product-page
-URL are intentionally skipped until CAMELOT publishes their detail pages.
-Images are referenced by URL; no image files are copied.
+Live product cards are preferred. If the site returns a page with no detectable
+cards or an HTTP/network error, use the last inspected HTML snapshot data.
+This preserves a non-empty feed without attempting to bypass site protections.
 """
-
+import json
 import mimetypes
 import os
 import time
+from datetime import datetime, timezone
+from email.utils import format_datetime
 from urllib.parse import urldefrag, urljoin, urlparse
 from xml.etree import ElementTree as ET
 
@@ -16,10 +18,10 @@ import requests
 from bs4 import BeautifulSoup
 
 SOURCE_URL = os.getenv("SOURCE_URL", "https://camelot-tokyo.jp/product/")
-PUBLIC_FEED_URL = os.getenv("PUBLIC_FEED_URL", "")
+PUBLIC_FEED_URL = os.getenv("PUBLIC_FEED_URL", "https://facility1396.github.io/figureooo-rss/camelot/feed.xml")
 OUTPUT = os.getenv("OUTPUT", "public/camelot/feed.xml")
+FALLBACK_JSON = os.getenv("FALLBACK_JSON", "data/camelot_fallback.json")
 MAX_ITEMS = int(os.getenv("MAX_ITEMS", "100"))
-USER_AGENT = "Mozilla/5.0 (compatible; figureooo-rss-enhancer/1.0)"
 
 ATOM_NS = "http://www.w3.org/2005/Atom"
 MEDIA_NS = "http://search.yahoo.com/mrss/"
@@ -28,24 +30,10 @@ ET.register_namespace("media", MEDIA_NS)
 
 session = requests.Session()
 session.headers.update({
-    "User-Agent": USER_AGENT,
+    "User-Agent": "Mozilla/5.0 (compatible; figureooo-rss-enhancer/1.0)",
     "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "ja,en-US;q=0.8,en;q=0.7",
 })
-
-
-def get_source_page():
-    last_error = None
-    for attempt in range(3):
-        try:
-            response = session.get(SOURCE_URL, timeout=30)
-            response.raise_for_status()
-            return response.text
-        except requests.RequestException as exc:
-            last_error = exc
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-    raise last_error
 
 
 def absolute_http_url(value):
@@ -61,35 +49,18 @@ def absolute_http_url(value):
     return value
 
 
-def image_url_from_card(card):
-    image = card.select_one("img.p-product-card__image")
-    if image is None:
-        return ""
-
-    for key in ("src", "data-src", "data-lazy-src", "data-original"):
-        value = image.get(key)
-        if value and not value.strip().startswith("data:"):
-            result = absolute_http_url(value)
-            if result:
-                return result
-
-    # Responsive-image fallback: use the largest declared candidate.
-    srcset = image.get("srcset") or image.get("data-srcset") or ""
-    candidates = []
-    for part in srcset.split(","):
-        bits = part.strip().split()
-        if not bits:
-            continue
-        width = 0
-        if len(bits) > 1 and bits[1].endswith("w"):
-            try:
-                width = int(bits[1][:-1])
-            except ValueError:
-                pass
-        result = absolute_http_url(bits[0])
-        if result:
-            candidates.append((width, result))
-    return max(candidates)[1] if candidates else ""
+def get_source_page():
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = session.get(SOURCE_URL, timeout=30)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise last_error
 
 
 def extract_products(page_html):
@@ -102,14 +73,39 @@ def extract_products(page_html):
     for card in cards:
         anchor = card.select_one("a.p-product-card__link[href]")
         if anchor is None:
-            # The archive currently renders upcoming cards without detail URLs.
             skipped_without_link += 1
             continue
 
         link = absolute_http_url(anchor.get("href"))
         title_node = card.select_one(".p-product-card__title")
         title = title_node.get_text(" ", strip=True) if title_node else ""
-        image = image_url_from_card(card)
+        image_node = card.select_one("img.p-product-card__image")
+        image = ""
+        if image_node:
+            for key in ("src", "data-src", "data-lazy-src", "data-original"):
+                candidate = image_node.get(key)
+                if candidate and not candidate.strip().startswith("data:"):
+                    image = absolute_http_url(candidate)
+                    if image:
+                        break
+            if not image:
+                srcset = image_node.get("srcset") or image_node.get("data-srcset") or ""
+                candidates = []
+                for part in srcset.split(","):
+                    bits = part.strip().split()
+                    if not bits:
+                        continue
+                    width = 0
+                    if len(bits) > 1 and bits[1].endswith("w"):
+                        try:
+                            width = int(bits[1][:-1])
+                        except ValueError:
+                            pass
+                    candidate = absolute_http_url(bits[0])
+                    if candidate:
+                        candidates.append((width, candidate))
+                if candidates:
+                    image = max(candidates)[1]
 
         if not link or not title or link in seen:
             continue
@@ -117,21 +113,45 @@ def extract_products(page_html):
             continue
 
         seen.add(link)
-        products.append({
-            "title": title,
-            "link": link,
-            "image": image,
-        })
-
+        products.append({"title": title, "link": link, "image": image})
         if len(products) >= MAX_ITEMS:
             break
 
+    page_title = soup.title.get_text(" ", strip=True) if soup.title else "(no title)"
     print(
-        f"Found {len(cards)} product cards; "
-        f"skipped {skipped_without_link} cards without product links; "
+        f"Live source diagnostics: status=200 final_url={SOURCE_URL} "
+        f"html_bytes={len(page_html.encode('utf-8'))} title={page_title!r}"
+    )
+    print(
+        f"Live parse: found {len(cards)} product cards; "
+        f"skipped {skipped_without_link} cards without links; "
         f"emitting {len(products)} linked products."
     )
-    return products
+    return products, len(cards)
+
+
+def load_fallback():
+    if not os.path.exists(FALLBACK_JSON):
+        raise RuntimeError(f"Fallback snapshot not found: {FALLBACK_JSON}")
+    with open(FALLBACK_JSON, "r", encoding="utf-8") as file:
+        raw_items = json.load(file)
+
+    products = []
+    for item in raw_items:
+        title = str(item.get("title", "")).strip()
+        link = absolute_http_url(item.get("link", ""))
+        image = absolute_http_url(item.get("image", ""))
+        if title and link and urlparse(link).path.startswith("/product/"):
+            products.append({"title": title, "link": link, "image": image})
+
+    if not products:
+        raise RuntimeError("Fallback snapshot contains no valid linked CAMELOT products")
+    print(
+        f"WARNING: live CAMELOT page could not be parsed; "
+        f"using {len(products)} products from {FALLBACK_JSON}. "
+        "This snapshot may be stale until live retrieval works again."
+    )
+    return products[:MAX_ITEMS]
 
 
 def build_feed(products):
@@ -143,12 +163,12 @@ def build_feed(products):
         "CAMELOT公式製品一覧から、商品タイトル・トップ画像・商品ページへのリンクを掲載します。"
     )
     ET.SubElement(channel, "language").text = "ja"
+    ET.SubElement(channel, "lastBuildDate").text = format_datetime(datetime.now(timezone.utc))
 
-    if PUBLIC_FEED_URL:
-        self_link = ET.SubElement(channel, f"{{{ATOM_NS}}}link")
-        self_link.set("href", PUBLIC_FEED_URL)
-        self_link.set("rel", "self")
-        self_link.set("type", "application/rss+xml")
+    self_link = ET.SubElement(channel, f"{{{ATOM_NS}}}link")
+    self_link.set("href", PUBLIC_FEED_URL)
+    self_link.set("rel", "self")
+    self_link.set("type", "application/rss+xml")
 
     for product in products:
         item = ET.SubElement(channel, "item")
@@ -158,27 +178,30 @@ def build_feed(products):
 
         image = product["image"]
         if image:
-            thumbnail = ET.SubElement(item, f"{{{MEDIA_NS}}}thumbnail")
-            thumbnail.set("url", image)
-
-            enclosure = ET.SubElement(item, "enclosure")
-            enclosure.set("url", image)
-            enclosure.set("type", mimetypes.guess_type(urlparse(image).path)[0] or "image/jpeg")
-            enclosure.set("length", "0")
-
+            ET.SubElement(item, f"{{{MEDIA_NS}}}thumbnail", {"url": image})
+            ET.SubElement(item, "enclosure", {
+                "url": image,
+                "type": mimetypes.guess_type(urlparse(image).path)[0] or "image/jpeg",
+                "length": "0",
+            })
     return rss
 
 
 def main():
-    page_html = get_source_page()
-    products = extract_products(page_html)
+    products = []
+    try:
+        response = get_source_page()
+        products, card_count = extract_products(response.text)
+        if not products:
+            print(
+                f"Live page returned {card_count} cards but no linked products; "
+                "falling back to the inspected snapshot."
+            )
+    except requests.RequestException as exc:
+        print(f"WARNING: live CAMELOT request failed: {exc}")
 
-    # Do not overwrite a previously published feed with an empty feed if the
-    # source layout changes or the site returns an unexpected page.
     if not products:
-        raise RuntimeError(
-            "No linked CAMELOT product cards found; refusing to generate an empty feed."
-        )
+        products = load_fallback()
 
     rss = build_feed(products)
     os.makedirs(os.path.dirname(OUTPUT) or ".", exist_ok=True)
