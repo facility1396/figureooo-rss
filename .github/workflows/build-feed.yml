@@ -3,7 +3,8 @@ name: Build RSS feeds
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17,47 * * * *"
+    # 09:00, 13:00, 18:00 JST (UTC 00:00, 04:00, 09:00)
+    - cron: "0 0,4,9 * * *"
 
 permissions:
   contents: read
@@ -50,16 +51,9 @@ jobs:
           OUTPUT: public/camelot/feed.xml
         run: python scripts/build_camelot_feed.py
 
-      - name: Generate HOTVENUS image RSS
-        env:
-          SOURCE_FEED: https://hotvenus.jp/works/feed/
-          PUBLIC_FEED_URL: https://facility1396.github.io/figureooo-rss/hotvenus/feed.xml
-          OUTPUT: public/hotvenus/feed.xml
-        run: python scripts/build_hotvenus_feed.py
-
       - name: Add landing page
         run: |
-          mkdir -p public/daiki public/camelot public/hotvenus
+          mkdir -p public/daiki public/camelot
           cat > public/index.html <<'EOF'
           <!doctype html>
           <html lang="ja">
@@ -71,7 +65,6 @@ jobs:
             <li><a href="./feed.xml">figure.ooo タイトル・トップ画像RSS</a></li>
             <li><a href="./daiki/feed.xml">ダイキ工業 製品情報RSS</a></li>
             <li><a href="./camelot/feed.xml">CAMELOT 製品情報RSS</a></li>
-            <li><a href="./hotvenus/feed.xml">HOTVENUS 製品情報RSS</a></li>
           </ul>
           </html>
           EOF
@@ -92,16 +85,6 @@ jobs:
           <h1>CAMELOT 製品情報RSS</h1>
           <p><a href="./feed.xml">RSSフィードを開く</a></p>
           <p><a href="https://camelot-tokyo.jp/product/">公式製品一覧</a></p>
-          </html>
-          EOF
-          cat > public/hotvenus/index.html <<'EOF'
-          <!doctype html>
-          <html lang="ja">
-          <meta charset="utf-8">
-          <title>HOTVENUS 製品情報RSS</title>
-          <h1>HOTVENUS 製品情報RSS</h1>
-          <p><a href="./feed.xml">RSSフィードを開く</a></p>
-          <p><a href="https://hotvenus.jp/works/">公式製品一覧</a></p>
           </html>
           EOF
 
